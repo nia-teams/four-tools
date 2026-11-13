@@ -1,0 +1,46 @@
+{
+  "name": "@nia-teams/four-tools",
+  "version": "0.1.0",
+  "description": "Portable read, write, edit, and shell tools for agents",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "examples",
+    "README.md",
+    "README_CN.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "import": "./dist/node/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "pretest": "npm run build"
+  },
+  "devDependencies": {
+    "@nia-teams/agent-core": "^0.1.1",
+    "@nia-teams/ai": "^0.1.1",
+    "@types/node": "^20.19.43",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  }
+}

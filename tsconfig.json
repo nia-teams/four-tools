@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "lib": ["ES2022", "DOM", "ES2022.Intl"],
+    "noEmit": true,
+    "paths": {
+      "@nia-teams/four-tools": ["./src/index.ts"],
+      "@nia-teams/four-tools/node": ["./src/node/index.ts"]
+    }
+  },
+  "include": ["src", "tests", "examples"]
+}
