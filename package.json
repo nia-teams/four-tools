@@ -1,6 +1,6 @@
 {
   "name": "@nia-teams/four-tools",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Portable read, write, edit, and shell tools for agents",
   "license": "MIT",
   "type": "module",
@@ -42,5 +42,13 @@
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nia-teams/four-tools.git"
+  },
+  "homepage": "https://github.com/nia-teams/four-tools#readme",
+  "bugs": {
+    "url": "https://github.com/nia-teams/four-tools/issues"
   }
 }

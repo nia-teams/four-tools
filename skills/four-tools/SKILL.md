@@ -1,21 +1,23 @@
 ---
 name: four-tools
-description: Build agents with @nia-teams/four-tools (read, write, edit, shell) on macOS/Linux via createNodeTools, or implement ExecutionEnv for remote sandboxes. Use when code imports @nia-teams/four-tools or @nia-teams/four-tools/node.
+description: Integrate @nia-teams/four-tools (read, write, edit, shell) into an agent on macOS/Linux or implement a custom ExecutionEnv for SSH, containers, or remote sandboxes. Use when code imports @nia-teams/four-tools or when adding file and shell tools to an agent built on @nia-teams/agent-core or a custom loop.
 ---
 
-`@nia-teams/four-tools` provides the four operating-system tools (`read`, `write`, `edit`, `shell`) for general-purpose and coding agents with zero runtime dependencies.
-`@nia-teams/four-tools` (root) contains OS-free tool factories (`createFourTools`), `applyUniqueEdit`, `FileMutationQueue`, and the `ExecutionEnv` interface with no `node:fs`, `node:path`, or `node:os` imports.
-`@nia-teams/four-tools/node` implements `ExecutionEnv` on macOS and Linux using Node.js POSIX syscalls and process groups.
+`@nia-teams/four-tools` provides standalone `read`, `write`, `edit`, and `shell` tools with zero runtime dependencies. The returned `FourTool[]` array (`{ name, description, inputSchema, execute }`) plugs directly into `AgentRuntime` / `AgentHost` (`@nia-teams/agent-core`) or any custom agent loop.
 
-For a local macOS/Linux agent, call `createNodeTools({ cwd })` from `@nia-teams/four-tools/node`, pass the returned tool array to `AgentRuntime` or `AgentHost` (`@nia-teams/agent-core`), and call `await tools.dispose()` on shutdown.
-To handle background terminal exit events, construct the backend with `createNodeEnv({ cwd, onTerminalExit })` and pass it to `createFourTools(env)` (or call `createNodeFourTools({ cwd, onTerminalExit })`). On completion, forward `onTerminalExit` into `host.injectMessage({ sessionId, eventType: 'terminal_exit', content: JSON.stringify(event), ... })` to wake the agent.
-To run over SSH, containers, or remote sandboxes, implement `ExecutionEnv` and pass it to `createFourTools(env)`.
-`createFourTools` shares one `FileMutationQueue` between `write` and `edit` in the same group; pass a shared `mutationQueue` across groups to serialize writes by `(env.id, realpath)`.
-Tools execute with the host process's permissions; `cwd` is only the base for relative paths. Path sandboxing, user approvals, and secret redaction belong in the host `ExecutionEnv`.
+## Local macOS / Linux (`@nia-teams/four-tools/node`)
 
-`read` uses 1-based line `offset` (default cap: 2,000 lines / 50 KiB; pass `read: { truncate: false }` to delegate output truncation to the runtime).
-`terminal_read` uses 0-based line `offset`.
-`edit` requires one unique match of `old_string` (exact match first, then Unicode-normalized fallback) and returns `OK: replacement applied`.
-`shell` waits 30 seconds by default (`timeout: 0` also uses 30s). When `env.terminals` is enabled, a timed-out command continues running in the background and returns `Terminal ID: <id>`; when `terminals: false` or `allowBackground: false` is set, timeout or abort kills the process group.
+- **Without background terminals**: Call `const tools = createNodeTools({ cwd, terminals: false })`, pass `tools` to `AgentRuntime` or `AgentHost`, and call `await tools.dispose()` on shutdown.
+- **With background terminals and wake-up**: Construct the environment with `const env = createNodeEnv({ cwd, onTerminalExit })` and pass `createFourTools(env)` to `AgentHost`. When a command exceeds the 30-second foreground wait, `shell` hands it to a background terminal and fires `onTerminalExit(event)` when the top-level shell exits; forward that event into `host.injectMessage` to wake the session. See `node_modules/@nia-teams/four-tools/examples/local-agent.ts` and `examples/web-agent.ts` for complete wiring.
 
-Exact signatures: `node_modules/@nia-teams/four-tools/dist/**/*.d.ts`. Reference manual & TypeScript examples: `node_modules/@nia-teams/four-tools/README.md` and `examples/` (`quickstart.ts`, `local-agent.ts`, `web-agent.ts`, run with `npx tsx`).
+## Custom Execution Environment (`@nia-teams/four-tools`)
+
+To run tools over SSH, containers, or remote sandboxes, implement `ExecutionEnv` (`id`, `platform`, `cwd`, `resolvePath`, `stat`, `readRange`, `readText`, `writeText`, `exec`, and optional `terminals: ManagedTerminalBackend`) and call `createFourTools(env, options)`. Omit `env.terminals` when the remote transport only supports foreground command execution.
+
+Each `createFourTools` call shares a `FileMutationQueue` between `write` and `edit`; pass a shared `options.mutationQueue` across multiple tool groups to serialize concurrent writes by `(env.id, realpath)`. Pass `read: { truncate: false }` when the host runtime manages tool-output truncation.
+
+## Security & Reference
+
+Tools execute with the host process's permissions; `cwd` only resolves relative paths. Enforce path restrictions, user approvals, and output secret redaction inside your `ExecutionEnv` implementation—gate operations before executing inside `resolvePath`, `writeText`, and `exec` (and `terminals` methods when enabled), rather than in post-execution hooks. To override or clear inherited environment variables per shell call, pass `options.hooks.resolveEnv`.
+
+Type definitions: `node_modules/@nia-teams/four-tools/dist/core/env.d.ts`, `dist/core/types.d.ts`, and `dist/node/index.d.ts`. Runnable examples: `node_modules/@nia-teams/four-tools/examples/` (`quickstart.ts`, `local-agent.ts`, `web-agent.ts`, run with `npx tsx`).

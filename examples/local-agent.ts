@@ -15,6 +15,12 @@ import { createNodeEnv } from '@nia-teams/four-tools/node';
 
 const vars = process.env;
 function selectClient(): ILLMClient {
+  if (vars.DEEPSEEK_API_KEY)
+    return new OpenAIClient({
+      apiKey: vars.DEEPSEEK_API_KEY,
+      baseURL: vars.OPENAI_BASE_URL ?? 'https://api.deepseek.com/v1',
+      model: vars.MODEL ?? 'deepseek-chat',
+    });
   if (vars.ANTHROPIC_API_KEY)
     return new AnthropicClient({
       apiKey: vars.ANTHROPIC_API_KEY,
@@ -32,7 +38,7 @@ function selectClient(): ILLMClient {
       model: vars.MODEL ?? 'gemini-2.5-flash',
     });
   throw new Error(
-    'Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY; MODEL overrides the default.',
+    'Set DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY; MODEL overrides the default.',
   );
 }
 const upstream = selectClient();

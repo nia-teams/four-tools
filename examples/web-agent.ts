@@ -31,6 +31,12 @@ import {
 export function selectWebClient(
   vars: NodeJS.ProcessEnv = process.env,
 ): ILLMClient {
+  if (vars.DEEPSEEK_API_KEY)
+    return new OpenAIClient({
+      apiKey: vars.DEEPSEEK_API_KEY,
+      baseURL: vars.OPENAI_BASE_URL ?? 'https://api.deepseek.com/v1',
+      model: vars.MODEL ?? 'deepseek-chat',
+    });
   if (vars.ANTHROPIC_API_KEY)
     return new AnthropicClient({
       apiKey: vars.ANTHROPIC_API_KEY,
@@ -51,7 +57,7 @@ export function selectWebClient(
       model: vars.MODEL ?? 'gemini-2.5-flash',
     });
   throw new Error(
-    'Set ANTHROPIC_API_KEY, OPENAI_API_KEY (+ OPENAI_BASE_URL), or GEMINI_API_KEY.',
+    'Set DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY (+ OPENAI_BASE_URL), or GEMINI_API_KEY.',
   );
 }
 export interface WebAgentOptions {

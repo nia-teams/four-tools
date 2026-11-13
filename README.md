@@ -2,35 +2,31 @@
 
 English | [简体中文](./README_CN.md)
 
-The common way to extend an AI agent is to keep adding specialized tools and MCP servers: every new integration brings another set of schemas until tool definitions consume tens of thousands of tokens, crowding the context window, raising argument error rates, and still leaving the agent stuck as soon as a task falls outside its preset tool list.
+[Pi](https://github.com/badlogic/pi-mono)-like agent tools—`read`, `write`, `edit`, `shell`—for [`@nia-teams/agent-core`](https://github.com/nia-teams/cloud-agent) or any custom agent loop.
 
-Large language models are already good at reading files, writing files, and running commands. Give an agent four operating-system tools—`read`, `write`, `edit`, and `shell` (under 1,000 tokens of schema in total)—and it can handle nearly any task: read documents, edit code, call APIs, run tests, or write and execute a script when no dedicated tool exists. These four tools are not just coding tools; they are the foundational toolset for a general-purpose agent operating on a computer.
+Pi ships its tools inside the `pi-coding-agent` CLI and `pi-durable` runtime rather than as a standalone zero-dependency package. `@nia-teams/four-tools` is an independent implementation, with the same interfaces Nia Teams runs in production:
 
-In production environments—local workstations, cloud sandboxes, headless containers, or chat-driven services—existing implementations of these four tools run into three limitations:
-- **Bundled inside interactive CLI products**: Community implementations (such as Pi's `coding-agent`) package the four tools inside a full terminal CLI application alongside TUI renderers and WASM image libraries rather than as a standalone, zero-dependency SDK.
-- **Coupled to specific external shell commands**: Implementations that shell out to `python3`, `setsid`, `stdbuf -oL`, `sed`, or `base64 -w0` fail on macOS (BSD userland) or minimal Alpine containers when those commands or flags are absent, and can lose `0755` executable permissions, overwrite symlinks during atomic writes, or allow parent shells on macOS to run subsequent commands during process-group teardown.
-- **No unattended background terminal management**: Interactive CLIs assume a human is watching `tmux`. Agents running in cloud services or chat channels executing 30+ second builds, test suites, or long-running tasks need timed-out commands to move into a background terminal without disconnecting, keep child log descriptors open, and wake the agent via an exit event when finished.
-
-`@nia-teams/four-tools` extracts these four tools into a standalone package with zero runtime dependencies and a two-layer structure:
-- **Core layer (`@nia-teams/four-tools`)**: Depends only on the `ExecutionEnv` interface with no `node:fs`, `node:path`, or `node:os` imports. Includes a TypeScript two-stage unique match edit engine (preserving UTF-8 BOM and existing CRLF/LF line endings), a `FileMutationQueue` serialized by environment ID and canonical path, and tool definitions compatible with `@nia-teams/agent-core` and Nia Teams.
-- **Native macOS / Linux syscall backend (`@nia-teams/four-tools/node`)**: Uses Node.js POSIX syscalls for line-paginated reads, atomic writes that preserve symlinks and target file modes, cross-kernel process-group signaling (`SIGSTOP` before `SIGKILL` on macOS), and background terminal lifecycle management (`exec` hands off after 30s by default, plus `terminal_create / list / read / signal / destroy`).
+1. **Standalone package, zero runtime dependencies**: No `dependencies` or `peerDependencies` in `package.json` and no CLI / TUI bundle, ready to embed in backend agents.
+2. **One toolset across execution environments**: The tool layer depends only on a unified `ExecutionEnv` interface. Use the built-in `/node` backend on local macOS / Linux, or write an adapter for SSH, containers, or remote sandboxes.
+3. **No external shell helper commands**: File and process operations use Node.js syscalls instead of shelling out to `python3`, `setsid`, `stdbuf`, or `sed`, behaving consistently on macOS and Linux while preserving symlinks and `0755` file modes.
+4. **Unattended long-running tasks**: `shell` waits 30 seconds in the foreground, hands unfinished commands to a background terminal, and wakes the agent via `onTerminalExit` when they finish.
 
 ```sh
 npm install @nia-teams/four-tools
 ```
 
-AI coding assistants can load the bundled skill: `node_modules/@nia-teams/four-tools/skills/four-tools/SKILL.md` ([`skills/four-tools/SKILL.md`](./skills/four-tools/SKILL.md)).
+AI coding assistants can load `node_modules/@nia-teams/four-tools/skills/four-tools/SKILL.md` ([`skills/four-tools/SKILL.md`](./skills/four-tools/SKILL.md)).
 
 ---
 
 ## Quick Start
 
-Requires Node.js 20+ on macOS or Linux. Install the dependencies and run [`examples/quickstart.ts`](./examples/quickstart.ts):
+Node.js >= 20 (macOS or Linux). Save the snippet below as `quickstart.ts` (or run [`examples/quickstart.ts`](./examples/quickstart.ts) from a repo checkout):
 
 ```sh
-npm install @nia-teams/agent-core @nia-teams/ai
+npm install @nia-teams/four-tools @nia-teams/agent-core @nia-teams/ai
 npm install -D tsx
-DEEPSEEK_API_KEY=sk-... npx tsx examples/quickstart.ts
+DEEPSEEK_API_KEY=sk-... npx tsx quickstart.ts
 ```
 
 ```ts
@@ -68,71 +64,66 @@ try {
 
 ---
 
-## Tool Behavior
+## Tools
 
-- **`read`**: Paginates text by line (1-based `offset`), capped at 2,000 lines and 50 KiB by default. Configure caps via `read: { maxLines, maxBytes }` or pass `read: { truncate: false }` to let the runtime manage output budgets.
-- **`write`**: Creates missing parent directories and writes the file, returning `File written: <path> (<n> chars)` (`n` is UTF-16 code units). When targeting a resolvable symlink, preserves the symlink and existing target file mode.
-- **`edit`**: Matches one unique exact substring first, falling back to a line-mapped Unicode-normalized match (NFC, curly quotes, narrow no-break spaces). Preserves UTF-8 BOM and untouched CRLF/LF line endings, rejects files over 16 MiB by default, and returns `OK: replacement applied`.
-- **`shell`**: Runs a command and returns formatted text containing `$ <command>`, stdout, optional `[stderr]`, and `exit_code: <code>, duration: <ms>ms`.
-- **Write serialization**: `createFourTools` shares a `FileMutationQueue` between `write` and `edit` in the same group; pass a shared `mutationQueue` across groups to serialize writes by environment ID and `realpath`.
-- **Hooks**: `afterRead`, `afterMutate`, and `afterExec` (on exit code 0) can return `@nia-teams/ai/protocol` guidance; `resolveEnv` supplies per-command environment overrides.
+Each tool is a plain `{ name, description, inputSchema, execute }` object:
 
----
-
-## Managed Background Terminals
-
-`createNodeEnv()` enables background terminals by default:
-
-- **Timeout handoff**: Foreground `shell` waits 30 seconds by default (`timeout: 0` also uses 30 seconds). On timeout, the process continues running in the background and returns `Terminal ID: <id>`.
-- **Terminal actions**: Manage background processes with `terminal_create`, `terminal_list`, `terminal_read` (0-based `offset`), `terminal_signal` (`SIGINT` / `SIGTERM` / `SIGKILL` map to exit codes `130` / `143` / `137`), and `terminal_destroy`.
-- **Exit events and log retention**: Child processes inherit log file descriptors and can continue writing after the top-level shell exits. `onTerminalExit` fires once when the top-level shell exits (suppressed on `destroy`); `env.dispose()` kills managed process groups and removes logs. Full output from truncated foreground commands is written to `spillPath`.
-- **Foreground-only mode**: Passing `createNodeTools({ cwd, terminals: false })`, `createFourTools(env, { shell: { allowBackground: false, name: 'bash' } })`, or an `ExecutionEnv` without `env.terminals` exposes a foreground-only schema and kills the process group on timeout or abort.
+- **`read`**: Reads text files only, line-paginated (1-based `offset`), defaulting to 2,000 lines and 50 KiB (`read: { maxLines, maxBytes }`, or `read: { truncate: false }` to let the runtime truncate).
+- **`write`**: Creates parent directories and writes the file, returning `File written: <path> (<n> chars)`. Preserves resolvable symlinks and existing file modes.
+- **`edit`**: Takes `{ path, old_string, new_string }` and replaces one uniquely matched span, preserving UTF-8 BOM and untouched CRLF/LF line endings (16 MiB default cap) and returning `OK: replacement applied`.
+- **`shell`**: Runs a command and returns `$ <command>`, stdout, `[stderr]`, and `exit_code: <code>, duration: <ms>ms`. Supports 6 `action` values:
+  - `exec` (default): Waits 30 seconds in the foreground, then hands off to a background terminal (`Terminal ID: <id>`).
+  - `terminal_create` / `terminal_list` / `terminal_read` (0-based `offset`) / `terminal_signal` (`SIGINT` / `SIGTERM` / `SIGKILL`) / `terminal_destroy`: Manage background processes.
+  - Passing `terminals: false`, `allowBackground: false`, or an `ExecutionEnv` without `env.terminals` hides `terminal_*` actions and kills the process group on timeout or abort.
 
 ---
 
-## Local Examples
+## `edit` Tool Design
 
-### 1. Interactive CLI Agent (`examples/local-agent.ts`)
+Pi's `edit` takes a nested `{ path, edits: [{ oldText, newText }] }` array and matches multiple edits against the original file in one call. `@nia-teams/four-tools` uses a simpler three-field schema—`{ path, old_string, new_string }`—replacing one uniquely matched span per call so models avoid malformed nested arguments.
 
-Streams assistant text, reasoning, and tool calls in the terminal, and feeds background terminal exits into `host.injectMessage` to wake follow-up turns:
+To edit multiple places in the same file, call `edit` multiple times. Writes to the same file run sequentially through a queue, so each call matches against the result of the previous edit without overlapping edit ranges.
 
-```sh
-OPENAI_API_KEY=sk-... OPENAI_BASE_URL=https://api.deepseek.com/v1 \
-  MODEL=deepseek-chat npx tsx examples/local-agent.ts
-```
-
-Selects a client from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GEMINI_API_KEY` in that order (`MODEL` overrides the default model). Press `Ctrl+C` once to cancel the active turn; press twice within 1.2s or type `/exit` to shut down and dispose terminals.
-
-### 2. Browser Workbench (`examples/web-agent.ts`)
-
-Starts a local HTTP server (`127.0.0.1:18880` by default; configurable via `HOST`, `PORT`, `WORKSPACE_DIR`, `WEB_AGENT_TOKEN`) with chat streaming, tool cards, workspace file previews, and live terminal status:
-
-```sh
-OPENAI_API_KEY=sk-... OPENAI_BASE_URL=https://api.deepseek.com/v1 \
-  MODEL=deepseek-chat npx tsx examples/web-agent.ts
-```
-
-Open the printed token URL in a browser. SSE reconnect replay is backed by `createSnapshotStream`. The token grants local command execution; place the server behind an authenticated TLS proxy before exposing it beyond loopback.
+When an exact match misses, `edit` retries once after normalizing NFKC forms, curly quotes, dashes, special spaces, and trailing whitespace, replacing only the matched span while leaving the rest of the line untouched.
 
 ---
 
-## Custom Execution Environments & Exports
-
-To run over SSH, containers, or remote sandboxes, implement `ExecutionEnv` and pass it to `createFourTools(env)`. Omit `env.terminals` when background process management is not supported.
+## Subpath Exports
 
 | Subpath | Exports |
 | --- | --- |
-| `@nia-teams/four-tools` | `createFourTools`, `createReadTool`, `createWriteTool`, `createEditTool`, `createShellTool`, `applyUniqueEdit`, `FileMutationQueue`, `ExecutionEnv`, and types |
-| `@nia-teams/four-tools/node` | `createNodeEnv`, `createNodeTools` (tool array with `.env` and `.dispose()`), `createNodeFourTools`, `PosixNodeExecutionEnv`, `PosixTerminalManager` |
+| `@nia-teams/four-tools` | `createFourTools(env, options?)`, `createReadTool`, `createWriteTool`, `createEditTool`, `createShellTool`, `applyUniqueEdit`, `FileMutationQueue`, `ExecutionEnv` |
+| `@nia-teams/four-tools/node` | `createNodeTools(options?)` (tool array with `.env` and `.dispose()`), `createNodeEnv(options?)` (`PosixNodeExecutionEnv`), `PosixNodeExecutionEnv`, `PosixTerminalManager` |
 
-Tools run with the host process's permissions. `cwd` is the base directory for relative paths; path sandboxing, approvals, and secret redaction are enforced by the host `ExecutionEnv`.
+Each `createFourTools` call shares one `FileMutationQueue` between `write` and `edit`; pass a shared `options.mutationQueue` across groups to serialize writes to the same file.
 
 ---
 
-## Build & Test
+## Repository Examples
+
+From a repository checkout, run the interactive examples:
+
+- **CLI agent ([`examples/local-agent.ts`](./examples/local-agent.ts))**:
+  ```sh
+  DEEPSEEK_API_KEY=sk-... npx tsx examples/local-agent.ts
+  ```
+- **Web workbench ([`examples/web-agent.ts`](./examples/web-agent.ts), listens on `127.0.0.1:18880` by default)**:
+  ```sh
+  DEEPSEEK_API_KEY=sk-... npx tsx examples/web-agent.ts
+  ```
+
+---
+
+## Security
+
+Tools run with the host process's permissions. `cwd` is only the base directory for relative paths and does not sandbox access; enforce path restrictions, user approvals, and secret redaction in the host `ExecutionEnv`.
+
+---
+
+## Development
 
 ```sh
-npm ci --registry=https://registry.npmjs.org
+npm ci
 npm run typecheck
 npm test
 npm run build
